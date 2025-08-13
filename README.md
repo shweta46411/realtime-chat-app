@@ -1,4 +1,4 @@
-# Incedo Quick Chat — Real-Time 1:1 Chat (FastAPI · PostgreSQL · React)
+# Incedo Quick Chat — (FastAPI · PostgreSQL · React)
 
 A beginner-friendly real-time chat app built with FastAPI (backend), React (frontend), and WebSockets for live messaging. Great for learning full-stack WebSocket flows!
 
