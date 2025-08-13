@@ -42,17 +42,22 @@ async def send_message(user_id: str, data: dict) -> bool:
                 connections.pop(user_id, None)
         return False
 
+# async def user_is_online(user_id: str) -> bool:
+#     db = await get_db_pool()
+#     try:
+#         result = await db.fetchrow("""
+#             SELECT 1 FROM users_online 
+#             WHERE user_id = $1 AND last_seen > NOW() - INTERVAL '60 seconds'
+#         """, user_id)
+#         return result is not None
+#     except:
+#         # Fallback to connection check
+#         return user_id in connections
 async def user_is_online(user_id: str) -> bool:
-    db = await get_db_pool()
-    try:
-        result = await db.fetchrow("""
-            SELECT 1 FROM users_online 
-            WHERE user_id = $1 AND last_seen > NOW() - INTERVAL '60 seconds'
-        """, user_id)
-        return result is not None
-    except:
-        # Fallback to connection check
+    # Chat-online = has an active chat WebSocket (not just DB presence)
+    async with conn_lock:
         return user_id in connections
+
 
 @router.websocket("/ws/chat")
 async def chat_websocket(ws: WebSocket, me: str = Query(...)):
@@ -77,7 +82,9 @@ async def chat_websocket(ws: WebSocket, me: str = Query(...)):
                 if not recipient or not text:
                     await ws.send_json({"error": "missing_fields"})
                     continue
-                
+                if recipient == me:
+                    await ws.send_json({"type": "error", "code": "SELF_CHAT_BLOCKED", "detail": "Cannot message yourself"})
+                    continue
                 # Create message payload
                 message = {
                     "type": "dm",
@@ -94,9 +101,9 @@ async def chat_websocket(ws: WebSocket, me: str = Query(...)):
                 if await user_is_online(recipient):
                     delivered = await send_message(recipient, message)
                     if not delivered:
-                        await ws.send_json({"info": "delivery_failed"})
+                        await ws.send_json({"type": "error", "code": "PEER_DELIVERY_FAILED", "detail": "Peer connection lost"})
                 else:
-                    await ws.send_json({"info": "user_offline"})
+                    await ws.send_json({"type": "error", "code": "PEER_OFFLINE", "detail": "User is offline"})
                     
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})

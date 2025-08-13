@@ -34,83 +34,82 @@ export default function App() {
   const messageContainer = useRef(null);
 
   // setup chat websocket connection
-  useEffect(() => {
-    if (socketRef.current) return; // prevent double connection in dev mode
+ // setup chat websocket connection
+useEffect(() => {
+  if (socketRef.current) return; // prevent double connection (StrictMode / re-renders)
 
-    console.log("Connecting to chat server...");
-    const wsUrl = `ws://localhost:8000/ws/chat?me=${encodeURIComponent(user.user_id)}`;
-    const ws = new WebSocket(wsUrl);
-    socketRef.current = ws;
+  console.log("Connecting to chat server...");
+  const wsUrl = `ws://localhost:8000/ws/chat?me=${encodeURIComponent(user.user_id)}`;
+  const ws = new WebSocket(wsUrl);
+  socketRef.current = ws;
 
-    ws.onopen = () => {
-      console.log("Chat connected successfully");
-      setConnectionStatus("connected");
-    };
+  let heartbeat; // keepalive timer id
 
-    ws.onmessage = (event) => {
-      try {
-        const messageData = JSON.parse(event.data);
-        console.log("Incoming message:", messageData);
-        
-        if (messageData.type === "dm") {
-          // add new message to list
-          const newMessage = {
-            from: messageData.from,
-            to: messageData.to,
-            text: messageData.text,
-            timestamp: messageData.timestamp || Date.now(),
-          };
-          setMessages(prev => [...prev, newMessage]);
-
-          // update unread count if not currently viewing this conversation
-          const senderId = messageData.from === user.user_id ? messageData.to : messageData.from;
-          setUnreadMessages(prev => {
-            if (activeUser && activeUser.user_id === senderId) {
-              return prev; // don't increment if we're viewing this chat
-            }
-            return { ...prev, [senderId]: (prev[senderId] || 0) + 1 };
-          });
-
-          // auto-open first conversation (commented out for now)
-          // if (!activeUser) {
-          //   const senderName = userNames[senderId] || senderId;
-          //   setActiveUser({ user_id: senderId, name: senderName });
-          // }
-        } else if (messageData.type === "error") {
-          console.error("Chat error received:", messageData);
-        } else if (messageData.type === "info") {
-          console.log("Chat info:", messageData);
-        }
-      } catch (error) {
-        console.warn("Failed to parse websocket message:", error);
+  ws.onopen = () => {
+    console.log("Chat connected successfully");
+    setConnectionStatus("connected");
+    // keepalive ping every 30s (optional but stabilizes dev/HMR)
+    heartbeat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "ping" }));
       }
-    };
+    }, 30000);
+  };
 
-    ws.onclose = () => {
-      console.log("Chat connection closed");
-      if (socketRef.current === ws) {
-        setConnectionStatus("disconnected");
-        socketRef.current = null;
+  ws.onmessage = (event) => {
+    try {
+      const messageData = JSON.parse(event.data);
+      console.log("Incoming message:", messageData);
+
+      if (messageData.type === "dm") {
+        const newMessage = {
+          from: messageData.from,
+          to: messageData.to,
+          text: messageData.text,
+          timestamp: messageData.timestamp || Date.now(),
+        };
+        setMessages((prev) => [...prev, newMessage]);
+
+        const senderId = messageData.from === user.user_id ? messageData.to : messageData.from;
+        setUnreadMessages((prev) => {
+          if (activeUser && activeUser.user_id === senderId) return prev;
+          return { ...prev, [senderId]: (prev[senderId] || 0) + 1 };
+        });
+      } else if (messageData.type === "error") {
+        console.error("Chat error received:", messageData);
+      } else if (messageData.type === "info") {
+        console.log("Chat info:", messageData);
       }
-    };
+    } catch (error) {
+      console.warn("Failed to parse websocket message:", error);
+    }
+  };
 
-    ws.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
+  ws.onerror = (error) => {
+    console.error("WebSocket error:", error);
+  };
 
-    // cleanup function
-    return () => {
-      console.log("Cleaning up websocket connection");
-      if (socketRef.current === ws) {
-        try {
-          ws.close();
-        } catch (e) {
-          console.log("Error closing socket:", e);
-        }
-        socketRef.current = null;
-      }
-    };
-  }, [user.user_id, activeUser, userNames]);
+  ws.onclose = () => {
+    console.log("Chat connection closed");
+    if (heartbeat) clearInterval(heartbeat);
+    if (socketRef.current === ws) {
+      setConnectionStatus("disconnected");
+      socketRef.current = null;
+    }
+  };
+
+  // cleanup (only the socket created by this effect)
+  return () => {
+    console.log("Cleaning up websocket connection");
+    if (heartbeat) clearInterval(heartbeat);
+    if (socketRef.current === ws) {
+      try { ws.close(); } catch (e) { console.log("Error closing socket:", e); }
+      socketRef.current = null;
+    }
+  };
+  // IMPORTANT: open once per identity
+}, [user.user_id]);
+
 
   // scroll to bottom when new messages come in
   useEffect(() => {
@@ -120,34 +119,34 @@ export default function App() {
   }, [messages, activeUser]);
 
   const handleSendMessage = () => {
-    if (!activeUser || !inputText.trim() || !socketRef.current) {
-      console.log("Cannot send message - missing data");
-      return;
-    }
-    
-    if (socketRef.current.readyState !== WebSocket.OPEN) {
-      console.log("Socket not ready, cannot send");
-      return;
-    }
+  if (!activeUser || !inputText.trim() || !socketRef.current) {
+    console.log("Cannot send message - missing data");
+    return;
+  }
+  if (socketRef.current.readyState !== WebSocket.OPEN) {
+    console.log("Socket not ready, cannot send");
+    return;
+  }
+  // prevent sending to yourself
+  if (activeUser.user_id === user.user_id) {
+    console.log("Cannot message yourself");
+    return;
+  }
 
-    console.log(`Sending message to ${activeUser.name}: ${inputText}`);
-    
-    const messagePayload = {
-      type: "dm",
-      to: activeUser.user_id,
-      text: inputText.trim(),
-    };
-    
-    socketRef.current.send(JSON.stringify(messagePayload));
-    setInputText(""); // clear input - server will echo back the message
+
+  console.log(`Sending message to ${activeUser.name}: ${inputText}`);
+  const messagePayload = {
+    type: "dm",
+    to: activeUser.user_id,
+    text: inputText.trim(),
   };
+  socketRef.current.send(JSON.stringify(messagePayload));
+  setInputText(""); // server will echo back
+};
 
-  const handleInputKeyPress = (e) => {
-    if (e.key === "Enter") {
-      handleSendMessage();
-    }
-  };
-
+const handleInputKeyPress = (e) => {
+  if (e.key === "Enter") handleSendMessage();
+};
   // get messages for current conversation
   const currentConversation = activeUser
     ? messages.filter(msg =>
