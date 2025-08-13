@@ -32,9 +32,13 @@ export default function App() {
   
   const socketRef = useRef(null);
   const messageContainer = useRef(null);
+  const [isWindowFocused, setIsWindowFocused] = useState(
+  typeof document !== "undefined" ? document.visibilityState === "visible" : true
+);
 
   // setup chat websocket connection
- // setup chat websocket connection
+
+
 useEffect(() => {
   if (socketRef.current) return; // prevent double connection (StrictMode / re-renders)
 
@@ -71,10 +75,14 @@ useEffect(() => {
         setMessages((prev) => [...prev, newMessage]);
 
         const senderId = messageData.from === user.user_id ? messageData.to : messageData.from;
-        setUnreadMessages((prev) => {
-          if (activeUser && activeUser.user_id === senderId) return prev;
-          return { ...prev, [senderId]: (prev[senderId] || 0) + 1 };
+        if (messageData.from !== user.user_id) {
+          setUnreadMessages((prev) => {
+    // Use the live document.visibilityState to avoid stale state from closures
+          const windowIsFocused = typeof document !== "undefined" && document.visibilityState === "visible";
+            if (activeUser && activeUser.user_id === senderId && windowIsFocused) return prev;
+            return { ...prev, [senderId]: (prev[senderId] || 0) + 1 };
         });
+}
       } else if (messageData.type === "error") {
         console.error("Chat error received:", messageData);
       } else if (messageData.type === "info") {
@@ -133,6 +141,8 @@ useEffect(() => {
     return;
   }
 
+// Keep isWindowFocused in sync with browser focus/visibility
+
 
   console.log(`Sending message to ${activeUser.name}: ${inputText}`);
   const messagePayload = {
@@ -143,6 +153,22 @@ useEffect(() => {
   socketRef.current.send(JSON.stringify(messagePayload));
   setInputText(""); // server will echo back
 };
+useEffect(() => {
+    const onFocus = () => setIsWindowFocused(true);
+    const onBlur = () => setIsWindowFocused(false);
+    const onVisibility = () =>
+      setIsWindowFocused(document.visibilityState === "visible");
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
 const handleInputKeyPress = (e) => {
   if (e.key === "Enter") handleSendMessage();
